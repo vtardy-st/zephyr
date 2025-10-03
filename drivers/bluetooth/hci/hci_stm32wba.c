@@ -450,8 +450,6 @@ static int bt_hci_stm32wba_open(const struct device *dev, bt_hci_recv_t recv)
 	struct hci_data *data = dev->data;
 	int ret = 0;
 
-	link_layer_register_isr();
-
 	ret = bt_ble_ctlr_init();
 	if (ret == 0) {
 		data->recv = recv;
@@ -552,6 +550,20 @@ static int bt_hci_stm32wba_setup(const struct device *dev,
 }
 #endif /* CONFIG_BT_HCI_SETUP */
 
+static int bt_hci_stm32wba_driver_init(const struct device *dev)
+{
+  const struct hci_dispatch_tbl* p_hci_dis_tbl = NULL;
+
+  link_layer_register_isr();
+
+  hci_get_dis_tbl( &p_hci_dis_tbl );
+
+  ll_intf_init(p_hci_dis_tbl);
+
+  return 0;
+
+}
+
 #ifdef CONFIG_PM_DEVICE
 static int radio_pm_action(const struct device *dev, enum pm_device_action action)
 {
@@ -612,8 +624,9 @@ static DEVICE_API(bt_hci, drv) = {
 #define HCI_DEVICE_INIT(inst) \
 	static struct hci_data hci_data_##inst = {}; \
 	PM_DEVICE_DT_INST_DEFINE(inst, radio_pm_action); \
-	DEVICE_DT_INST_DEFINE(inst, NULL, PM_DEVICE_DT_INST_GET(inst), &hci_data_##inst, NULL, \
-			      POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE, &drv);
+	DEVICE_DT_INST_DEFINE(inst,bt_hci_stm32wba_driver_init,PM_DEVICE_DT_INST_GET(inst), \
+			      &hci_data_##inst, NULL, POST_KERNEL, \
+			      CONFIG_KERNEL_INIT_PRIORITY_DEVICE, &drv);
 
 /* Only one instance supported */
 HCI_DEVICE_INIT(0)
