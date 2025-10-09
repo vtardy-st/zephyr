@@ -96,27 +96,34 @@ void radio_low_prio_isr(void)
 }
 
 
-void link_layer_register_isr(void)
+void link_layer_register_isr(uint8_t force)
 {
-	ARM_IRQ_DIRECT_DYNAMIC_CONNECT(RADIO_INTR_NUM, 0, 0, reschedule);
+	static uint8_t is_isr_registered = 0;
 
-	/* Ensure the IRQ is disabled before enabling it at run time */
-	irq_disable(RADIO_INTR_NUM);
+	if ((force == 1) || (is_isr_registered == 0)) {
 
-	irq_connect_dynamic(RADIO_INTR_NUM, RADIO_INTR_PRIO_HIGH_Z,
-			    (void (*)(const void *))radio_high_prio_isr, NULL, 0);
+		is_isr_registered = 1;
+		
+		ARM_IRQ_DIRECT_DYNAMIC_CONNECT(RADIO_INTR_NUM, 0, 0, reschedule);
 
-	irq_enable(RADIO_INTR_NUM);
+		/* Ensure the IRQ is disabled before enabling it at run time */
+		irq_disable(RADIO_INTR_NUM);
 
-	ARM_IRQ_DIRECT_DYNAMIC_CONNECT(RADIO_SW_LOW_INTR_NUM, 0, 0, reschedule);
+		irq_connect_dynamic(RADIO_INTR_NUM, RADIO_INTR_PRIO_HIGH_Z,
+				(void (*)(const void *))radio_high_prio_isr, NULL, 0);
 
-	/* Ensure the IRQ is disabled before enabling it at run time */
-	irq_disable(RADIO_SW_LOW_INTR_NUM);
+		irq_enable(RADIO_INTR_NUM);
 
-	irq_connect_dynamic(RADIO_SW_LOW_INTR_NUM, RADIO_SW_LOW_INTR_PRIO,
-			    (void (*)(const void *))radio_low_prio_isr, NULL, 0);
+		ARM_IRQ_DIRECT_DYNAMIC_CONNECT(RADIO_SW_LOW_INTR_NUM, 0, 0, reschedule);
 
-	irq_enable(RADIO_SW_LOW_INTR_NUM);
+		/* Ensure the IRQ is disabled before enabling it at run time */
+		irq_disable(RADIO_SW_LOW_INTR_NUM);
+
+		irq_connect_dynamic(RADIO_SW_LOW_INTR_NUM, RADIO_SW_LOW_INTR_PRIO,
+				(void (*)(const void *))radio_low_prio_isr, NULL, 0);
+
+		irq_enable(RADIO_SW_LOW_INTR_NUM);
+	}
 }
 
 
