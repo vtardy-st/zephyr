@@ -86,6 +86,7 @@
 
 &clk_hse {
 	status = "okay";
+	/delete-property/ hse-trimming;
 };
 
 &clk_hsi {
