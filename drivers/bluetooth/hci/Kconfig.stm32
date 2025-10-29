@@ -12,4 +12,16 @@ config BT_STM32WBA_USE_TEMP_BASED_CALIB
 	select STM32_TEMP
 	help
 	  Allows the linklayer to calibrate itself on the current temperature read on the ADC4
+
+config BT_STM32WBA_LIB_CONFIG
+	string "STM32WBA Bluetooth library configuration"
+	default 'full' if BT_EXT_ADV || BT_PER_ADV || BT_PER_ADV_SYNC || BT_SCA_UPDATE \
+		     || (BT_DF_CTE_RX_AOA || BT_CTLR_DF_ANT_SWITCH_RX || BT_CTLR_DF_ANT_SWITCH_TX || BT_DF_CTE_TX_AOD) \
+		     || (BT_PER_ADV_SYNC_TRANSFER_RECEIVER || BT_PER_ADV_SYNC_TRANSFER_SENDER || BT_CTLR_SYNC_PERIODIC) \
+		     || BT_ISO_UNICAST || BT_ISO_BROADCASTER || BT_ISO_SYNC_RECEIVER || BT_TRANSMIT_POWER_CONTROL \
+		     || BT_SUBRATING || BT_CTLR_ADV_PERIODIC_ADI_SUPPORT || BT_EXT_ADV_CODING_SELECTION
+	default 'basic'
+	help
+	  sets the library configuration according to Bluetooth features
+
 endmenu
