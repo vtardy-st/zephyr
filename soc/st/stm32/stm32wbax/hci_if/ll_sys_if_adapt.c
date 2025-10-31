@@ -12,19 +12,19 @@ LOG_MODULE_REGISTER(ll_sys_if_adapt);
 
 #include "ll_sys.h"
 #include "ll_intf_cmn.h"
-#if defined(CONFIG_BT_STM32WBA_USE_TEMP_BASED_CALIB)
+#if defined(CONFIG_USE_TEMP_BASED_RADIO_CALIB)
 #include <zephyr/drivers/sensor.h>
-#endif /* defined(CONFIG_BT_STM32WBA_USE_TEMP_BASED_CALIB) */
+#endif /* defined(CONFIG_USE_TEMP_BASED_RADIO_CALIB) */
 #if defined(CONFIG_BT_STM32WBA)
 extern struct k_mutex ble_ctrl_stack_mutex;
 #endif /* CONFIG_BT_STM32WBA */
 extern struct k_work_q ll_work_q;
 struct k_work ll_sys_work;
 
-#if defined(CONFIG_BT_STM32WBA_USE_TEMP_BASED_CALIB)
+#if defined(CONFIG_USE_TEMP_BASED_RADIO_CALIB)
 static const struct device *dev_temp_sensor = DEVICE_DT_GET(DT_ALIAS(die_temp0));
 static struct k_work temp_calibration_work;
-#endif /* defined(CONFIG_BT_STM32WBA_USE_TEMP_BASED_CALIB) */
+#endif /* defined(CONFIG_USE_TEMP_BASED_RADIO_CALIB) */
 
 static void ll_sys_bg_process_handler(struct k_work *work)
 {
@@ -52,7 +52,7 @@ void ll_sys_bg_process_init(void)
 	k_work_init(&ll_sys_work, &ll_sys_bg_process_handler);
 }
 
- #if defined(CONFIG_BT_STM32WBA_USE_TEMP_BASED_CALIB)
+ #if defined(CONFIG_USE_TEMP_BASED_RADIO_CALIB)
 
 /**
  * @brief  Link Layer temperature calibration function
@@ -77,6 +77,7 @@ static void ll_sys_temperature_calibration_measurement(void)
 	}
 
 	LOG_DBG("Radio calibration, temperature : %u °C", val.val1);
+
 	ll_intf_cmn_set_temperature_value(val.val1);
 }
 
@@ -124,4 +125,4 @@ void ll_sys_bg_temperature_measurement(void)
 	}
 }
 
-#endif /* defined(CONFIG_BT_STM32WBA_USE_TEMP_BASED_CALIB) */
+#endif /* defined(CONFIG_USE_TEMP_BASED_RADIO_CALIB) */
