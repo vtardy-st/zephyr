@@ -96,10 +96,27 @@ struct bt_hci_end_radio_activity_evt {
 } __packed;
 #endif /* CONFIG_PM_DEVICE */
 
+/*ACI Reset*/
+#define ACI_RESET                             (0xFF00)
+struct aci_reset {
+	uint8_t mode;
+	uint32_t options;
+} __packed;
+
+#define BT_HCI_STATE_DEINIT                   (0)
+#define BT_HCI_STATE_OPENED                   (1)
+#define BT_HCI_STATE_CLOSED                   (2)
+
+uint8_t bt_hci_state = BT_HCI_STATE_DEINIT;
+
 static uint32_t __noinit buffer[DIVC(BLE_DYN_ALLOC_SIZE, 4)];
 static uint32_t __noinit gatt_buffer[DIVC(BLE_GATT_BUF_SIZE, 4)];
 
 extern uint8_t ll_state_busy;
+
+extern void LINKLAYER_PLAT_ClockDeinit(void);
+extern void LINKLAYER_PLAT_ClockInit(void);
+extern void link_layer_disable_isr(void);
 
 #ifdef CONFIG_PM_DEVICE
 static int bt_hci_stm32wba_set_radio_activity_mask(void)
@@ -452,6 +469,10 @@ static int bt_hci_stm32wba_open(const struct device *dev, bt_hci_recv_t recv)
 	struct hci_data *data = dev->data;
 	int ret = 0;
 
+	if (bt_hci_state == BT_HCI_STATE_CLOSED){
+		LINKLAYER_PLAT_ClockInit();
+	}
+
 	link_layer_register_isr();
 
 	ret = bt_ble_ctlr_init();
@@ -463,8 +484,40 @@ static int bt_hci_stm32wba_open(const struct device *dev, bt_hci_recv_t recv)
 	if (IS_ENABLED(CONFIG_FLASH)) {
 		FD_SetStatus(FD_FLASHACCESS_RFTS_BYPASS, LL_FLASH_DISABLE);
 	}
-
+	if (ret == 0){
+		bt_hci_state = BT_HCI_STATE_OPENED;
+	}
 	return ret;
+}
+
+static int bt_hci_stm32wba_close(const struct device *dev)
+{
+	struct aci_reset *param;
+	struct net_buf *buf;
+	int err;
+
+	ARG_UNUSED(dev);
+
+	buf = bt_hci_cmd_alloc(K_FOREVER);
+	if (!buf) {
+		return -ENOBUFS;
+	}
+
+	param = net_buf_add(buf, sizeof(*param));
+	param->mode = 0;
+	param->options = CFG_BLE_OPTIONS;
+
+	err = bt_hci_cmd_send_sync(ACI_RESET, buf, NULL);
+	if (err) {
+		return err;
+	}
+	bt_hci_state = BT_HCI_STATE_CLOSED;
+	/*No radio event scheduled : inform LL to enter in deep sleep*/
+	(void)ll_sys_dp_slp_enter(LL_DP_SLP_NO_WAKEUP);
+	link_layer_disable_isr();
+	LINKLAYER_PLAT_ClockDeinit();
+
+	return err;
 }
 
 #if defined(CONFIG_BT_HCI_SETUP)
@@ -609,6 +662,7 @@ static DEVICE_API(bt_hci, drv) = {
 #endif /* CONFIG_BT_HCI_SETUP */
 	.open           = bt_hci_stm32wba_open,
 	.send           = bt_hci_stm32wba_send,
+	.close          = bt_hci_stm32wba_close,
 };
 
 #define HCI_DEVICE_INIT(inst) \
