@@ -119,6 +119,13 @@ void link_layer_register_isr(void)
 	irq_enable(RADIO_SW_LOW_INTR_NUM);
 }
 
+void link_layer_disable_isr(void)
+{
+	irq_disable(RADIO_INTR_NUM);
+
+	irq_disable(RADIO_SW_LOW_INTR_NUM);
+}
+
 
 void LINKLAYER_PLAT_TriggerSwLowIT(uint8_t priority)
 {
