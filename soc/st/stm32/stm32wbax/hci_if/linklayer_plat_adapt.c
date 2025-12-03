@@ -124,6 +124,9 @@ void link_layer_disable_isr(void)
 	irq_disable(RADIO_INTR_NUM);
 
 	irq_disable(RADIO_SW_LOW_INTR_NUM);
+
+	local_basepri_value = __get_BASEPRI();
+	__set_BASEPRI_MAX(RADIO_INTR_PRIO_LOW_Z << 4);
 }
 
 
