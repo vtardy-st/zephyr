@@ -18,6 +18,7 @@
 #include <zephyr/pm/pm.h>
 #include "linklayer_plat.h"
 #include <linklayer_plat_local.h>
+#include <hci_if.h>
 
 #include <zephyr/sys/byteorder.h>
 
@@ -464,6 +465,11 @@ static int bt_hci_stm32wba_open(const struct device *dev, bt_hci_recv_t recv)
 {
 	struct hci_data *data = dev->data;
 	int ret = 0;
+	/* Initialization of the thread dedicated to BLE Host Controller IP */
+	stm32wba_ble_ctrl_thread_init();
+
+	/* Initialization of the thread dedicated to Link Layer Controller IP */
+	stm32wba_ll_ctrl_thread_init();
 
 	if (bt_hci_state == BT_HCI_STATE_CLOSED) {
 #if !defined(CONFIG_IEEE802154_STM32WBA)
