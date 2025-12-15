@@ -14,6 +14,9 @@
 #endif /* CONFIG_BT_STM32WBA */
 #include "ll_intf.h"
 
+#include <zephyr/logging/log.h>
+LOG_MODULE_REGISTER(host_if);
+
 K_MUTEX_DEFINE(ble_ctrl_stack_mutex);
 #if defined(CONFIG_BT_STM32WBA)
 struct k_work_q ble_ctrl_work_q;
@@ -68,27 +71,34 @@ static void bpka_work_handler(struct k_work *work)
 }
 #endif /* CONFIG_BT_STM32WBA */
 
-static int stm32wba_ctrl_init(void)
+int stm32wba_ll_ctrl_thread_init(void)
 {
-	struct k_work_queue_config ll_cfg = {.name = "LL thread"};
+	if (!ll_work_q.flags) {
+		struct k_work_queue_config ll_cfg = {.name = "LL thread"};
 
+		k_work_queue_init(&ll_work_q);
+		k_work_queue_start(&ll_work_q, ll_work_area,
+				K_THREAD_STACK_SIZEOF(ll_work_area),
+				LL_THREAD_PRIO, &ll_cfg);
+	}
+	return 0;
+}
+
+int stm32wba_ble_ctrl_thread_init(void)
+{
 #if defined(CONFIG_BT_STM32WBA)
-	struct k_work_queue_config ble_ctrl_cfg = {.name = "ble ctrl thread"};
+	if (!ble_ctrl_work_q.flags) {
+		struct k_work_queue_config ble_ctrl_cfg = {.name = "ble ctrl thread"};
 
-	k_work_queue_init(&ble_ctrl_work_q);
-	k_work_queue_start(&ble_ctrl_work_q, ble_ctrl_work_area,
-			   K_THREAD_STACK_SIZEOF(ble_ctrl_work_area),
-			   BLE_CTRL_THREAD_PRIO, &ble_ctrl_cfg);
+		k_work_queue_init(&ble_ctrl_work_q);
+		k_work_queue_start(&ble_ctrl_work_q, ble_ctrl_work_area,
+				K_THREAD_STACK_SIZEOF(ble_ctrl_work_area),
+				BLE_CTRL_THREAD_PRIO, &ble_ctrl_cfg);
 
-	k_work_init(&ble_ctrl_stack_work, &ble_ctrl_stack_handler);
-	k_work_init(&bpka_work, &bpka_work_handler);
+		k_work_init(&ble_ctrl_stack_work, &ble_ctrl_stack_handler);
+		k_work_init(&bpka_work, &bpka_work_handler);
+	}
 #endif /* CONFIG_BT_STM32WBA */
-
-	k_work_queue_init(&ll_work_q);
-	k_work_queue_start(&ll_work_q, ll_work_area,
-			   K_THREAD_STACK_SIZEOF(ll_work_area),
-			   LL_THREAD_PRIO, &ll_cfg);
-
 	return 0;
 }
 
@@ -103,5 +113,3 @@ void BPKACB_Process(void)
 	k_work_submit_to_queue(&ble_ctrl_work_q, &bpka_work);
 }
 #endif /* CONFIG_BT_STM32WBA */
-
-SYS_INIT(stm32wba_ctrl_init, POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
