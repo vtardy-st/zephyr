@@ -56,7 +56,7 @@ struct aci_set_ble_addr {
 /* Proprietary command to enable notification of radio events */
 #define ACI_HAL_WRITE_SET_RADIO_ACTIVITY_MASK BT_OP(BT_OGF_VS, 0xFC18)
 #define RADIO_ACTIVITY_MASK_ALL               (0x7FFF)
-#define ACI_HAL_END_OF_RADIO_ACTIVITY_EVENT   (0x0004)
+#define ACI_HAL_END_OF_RADIO_ACTIVITY_EVENT   (0x1804)
 
 struct aci_set_radio_activity_mask_params {
 	uint16_t Radio_Activity_Mask;
