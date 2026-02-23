@@ -15,6 +15,8 @@ config BT_STM32WBA_USE_TEMP_BASED_CALIB
 
 choice BT_STM32WBA_LIB_CONFIG
 	prompt "STM32WBA Bluetooth library configuration"
+	default BT_STM32WBA_BASIC_PLUS_LIB if \
+		BT_EXT_ADV || BT_TRANSMIT_POWER_CONTROL || BT_SUBRATING
 	default BT_STM32WBA_FULL_LIB if \
 		BT_EXT_ADV || BT_PER_ADV || BT_PER_ADV_SYNC || BT_SCA_UPDATE || BT_DF_CTE_RX_AOA \
 		|| BT_CTLR_DF_ANT_SWITCH_RX || BT_CTLR_DF_ANT_SWITCH_TX || BT_DF_CTE_TX_AOD \
@@ -33,6 +35,15 @@ config BT_STM32WBA_BASIC_LIB
 	  Advertising, Scanning, Connection Peripheral and Central, Privacy,
 	  Channel Selection Algorithm #2, Data Length Extension, LE Encryption,
 	  Legacy Pairing, LE secure connections, LE 2Mbit PHY, LE Coded PHY.
+
+config BT_STM32WBA_BASIC_PLUS_LIB
+	bool "STM32WBA Bluetooth library basic plus configuration"
+	help
+	  Embed basic Plus Bluetooth features support in STM32WBA:
+	  Advertising, Scanning, Connection Peripheral and Central, Privacy,
+	  Channel Selection Algorithm #2, Data Length Extension, LE Encryption,
+	  Legacy Pairing, LE secure connections, LE 2Mbit PHY, LE Coded PHY,
+	  Extended Advertising, LE Power Control, Connection Subrating.
 
 config BT_STM32WBA_FULL_LIB
 	bool "STM32WBA Bluetooth library full configuration"
