@@ -112,4 +112,38 @@ config CLOCK_STM32_MCO
 	  Allows to output various different clock sources onto the MCO pin
 	  using a configurable prescaler.
 
+menu "STM32WBA HSE option"
+	depends on DT_HAS_ST_STM32WBA_HSE_CLOCK_ENABLED
+
+choice STM32WBA_SET_HSE_TRIMMING_MODE
+	prompt "STM32WBA Set HSE Trimming mode"
+	default STM32WBA_HSE_TRIMMING_OTP if BOARD_NUCLEO_WBA65RI || BOARD_NUCLEO_WBA55CG
+	default STM32WBA_HSE_TRIMMING_DT
+	help
+	  Sets the mode of the HSE Trimming configuration.
+	  Allow to specify how is extracted the HSE Trimming value
+	  (from Device Tree, from OTP...) before setting it.
+
+config STM32WBA_HSE_TRIMMING_UNDEFINED
+	bool "HSE Trimming not defined"
+	help
+	  HSE trimming is not defined. User should implement its own
+	  process to set the HSE Trimming value, if needed.
+
+config STM32WBA_HSE_TRIMMING_DT
+	bool "Set HSE Trimming defined Device Tree"
+	help
+	  The HSE Trimming is setting according to the value defined in the
+	  Device Tree.
+
+config STM32WBA_HSE_TRIMMING_OTP
+	bool "Set HSE Trimming defined in OTP"
+	help
+	   The HSE Trimming is setting according to the value extracted from
+	   the OTP.
+
+endchoice
+
+endmenu # DT_HAS_ST_STM32WBA_HSE_CLOCK_ENABLED
+
 endif # CLOCK_CONTROL_STM32_CUBE
