@@ -624,6 +624,7 @@
 #define STM32_HSE_ENABLED	1
 #define STM32_HSE_DIV2		DT_PROP(DT_NODELABEL(clk_hse), hse_div2)
 #define STM32_HSE_FREQ		DT_PROP(DT_NODELABEL(clk_hse), clock_frequency)
+#define STM32_HSE_TRIMMING	DT_PROP(DT_NODELABEL(clk_hse), hse_trimming)
 #elif DT_NODE_HAS_COMPAT_STATUS(DT_NODELABEL(clk_hse), st_stm32n6_hse_clock, okay)
 #define STM32_HSE_ENABLED	1
 #define STM32_HSE_BYPASS	DT_PROP(DT_NODELABEL(clk_hse), hse_bypass)
