@@ -13,7 +13,7 @@
 #include <stm32_ll_rng.h>
 #if defined(CONFIG_BT_STM32WBA)
 #include "bleplat.h"
-#include "bpka.h"
+#include "pka_ctrl.h"
 #include "baes.h"
 #endif /* CONFIG_BT_STM32WBA */
 #include "linklayer_plat.h"
@@ -35,7 +35,11 @@ struct entropy_stm32_rng_dev_cfg {
 #if defined(CONFIG_BT_STM32WBA)
 void BLEPLAT_Init(void)
 {
-	BPKA_Reset();
+#if defined(CONFIG_BT_STM32WBA)
+	/* Initialize BLE related modules */
+	BAES_Reset( );
+	PKACTRL_Reset();
+#endif /* CONFIG_BT_STM32WBA */
 
 	rng_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_entropy));
 	if (!device_is_ready(rng_dev)) {
@@ -75,26 +79,26 @@ void BLEPLAT_RngGet(uint8_t n, uint32_t *val)
 
 int BLEPLAT_PkaStartP256Key(const uint32_t *local_private_key)
 {
-	return BPKA_StartP256Key(local_private_key);
+	return PKACTRL_StartP256Key(local_private_key);
 }
 
 void BLEPLAT_PkaReadP256Key(uint32_t *local_public_key)
 {
-	BPKA_ReadP256Key(local_public_key);
+	PKACTRL_ReadP256Key(local_public_key);
 }
 
 int BLEPLAT_PkaStartDhKey(const uint32_t *local_private_key,
 			  const uint32_t *remote_public_key)
 {
-	return BPKA_StartDhKey(local_private_key, remote_public_key);
+	return PKACTRL_StartDhKey(local_private_key, remote_public_key);
 }
 
 int BLEPLAT_PkaReadDhKey(uint32_t *dh_key)
 {
-	return BPKA_ReadDhKey(dh_key);
+	return PKACTRL_ReadDhKey(dh_key);
 }
 
-void BPKACB_Complete(void)
+void PKACTRL_CB_Complete(void)
 {
 	BLEPLATCB_PkaComplete();
 }
