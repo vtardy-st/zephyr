@@ -154,12 +154,18 @@ static void stm32wba_802154_rx_thread(void *arg1, void *arg2, void *arg3)
 static void stm32wba_802154_receive_failed(stm32wba_802154_ral_rx_error_t error)
 {
 	const struct device *dev = stm32wba_802154_get_device();
-	enum ieee802154_rx_fail_reason reason;
+	enum ieee802154_rx_fail_reason reason = IEEE802154_RX_FAIL_OTHER;
 
-	if (error == STM32WBA_802154_RAL_RX_ERROR_NO_BUFFERS) {
+	switch (error) {
+	case STM32WBA_802154_RAL_RX_ERROR_FCS:
+		reason = IEEE802154_RX_FAIL_INVALID_FCS;
+		break;
+	case STM32WBA_802154_RAL_RX_ERROR_NO_FRAME_RECEIVED:
 		reason = IEEE802154_RX_FAIL_NOT_RECEIVED;
-	} else {
-		reason = IEEE802154_RX_FAIL_OTHER;
+		break;
+	case STM32WBA_802154_RAL_RX_ERROR_DEST_ADDRESS_FILTERED: 
+		reason = IEEE802154_RX_FAIL_ADDR_FILTERED;
+		break;
 	}
 
 	if (IS_ENABLED(CONFIG_IEEE802154_STM32WBA_LOG_RX_FAILURES)) {
@@ -965,7 +971,7 @@ static int stm32wba_802154_attr_get(const struct device *dev,
 static void stm32wba_802154_receive_done(uint8_t *p_buffer,
 					 stm32wba_802154_ral_receive_done_metadata_t *p_metadata)
 {
-	if (p_buffer == NULL) {
+	if ((p_buffer == NULL) || (p_metadata->error != 0)) {
 		stm32wba_802154_receive_failed(p_metadata->error);
 		return;
 	}
