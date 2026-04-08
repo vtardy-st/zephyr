@@ -10,6 +10,7 @@
 
 #include <zephyr/device.h>
 #include <zephyr/kernel.h>
+#include <errno.h>
 #include <string.h>
 #include <zephyr/crypto/crypto.h>
 
@@ -62,6 +63,9 @@ static uint8_t plaintext[64] __aligned(IO_ALIGNMENT_BYTES) = {
 	0xdf, 0x4f, 0x9b, 0x17, 0xad, 0x2b, 0x41, 0x7b, 0xe6, 0x6c, 0x37, 0x10};
 
 uint32_t cap_flags;
+
+#define CMAC_BLOCK_SIZE 16
+#define CMAC_RB 0x87
 
 static void print_buffer_comparison(const uint8_t *wanted_result,
 				    uint8_t *result, size_t length)
@@ -382,6 +386,134 @@ out:
 	cipher_free_session(dev, &ini);
 }
 
+/* RFC 4493 Example 3 (len = 64) */
+static const uint8_t cmac_expected_64[CMAC_BLOCK_SIZE] = {
+	0x51, 0xf0, 0xbe, 0xbf, 0x7e, 0x3b, 0x9d, 0x92,
+	0xfc, 0x49, 0x74, 0x17, 0x79, 0x36, 0x3c, 0xfe
+};
+
+/* RFC 4493 Example 2 (len = 40) */
+static const uint8_t cmac_expected_40[CMAC_BLOCK_SIZE] = {
+	0xdf, 0xa6, 0x67, 0x47, 0xde, 0x9a, 0xe6, 0x30,
+	0x30, 0xca, 0x32, 0x61, 0x14, 0x97, 0xc8, 0x27
+};
+
+static void cmac_left_shift_one_bit(const uint8_t *in, uint8_t *out)
+{
+	uint8_t overflow = 0U;
+
+	for (int i = CMAC_BLOCK_SIZE - 1; i >= 0; i--) {
+		uint8_t current = in[i];
+
+		out[i] = (uint8_t)((current << 1) | overflow);
+		overflow = (current & 0x80U) ? 1U : 0U;
+	}
+}
+
+static void cmac_xor_128(const uint8_t *a, const uint8_t *b, uint8_t *out)
+{
+	for (int i = 0; i < CMAC_BLOCK_SIZE; i++) {
+		out[i] = a[i] ^ b[i];
+	}
+}
+
+static int ecb_encrypt_block(struct cipher_ctx *ctx, const uint8_t *in, uint8_t *out)
+{
+	struct cipher_pkt pkt = {
+		.in_buf = (uint8_t *)in,
+		.in_len = CMAC_BLOCK_SIZE,
+		.out_buf = out,
+		.out_buf_max = CMAC_BLOCK_SIZE,
+	};
+
+	return cipher_block_op(ctx, &pkt);
+}
+
+void cmac_mode(const struct device *dev)
+{
+	uint8_t l[CMAC_BLOCK_SIZE] __aligned(IO_ALIGNMENT_BYTES) = {0};
+	uint8_t k1[CMAC_BLOCK_SIZE] __aligned(IO_ALIGNMENT_BYTES);
+	uint8_t k2[CMAC_BLOCK_SIZE] __aligned(IO_ALIGNMENT_BYTES);
+	uint8_t x[CMAC_BLOCK_SIZE] __aligned(IO_ALIGNMENT_BYTES) = {0};
+	uint8_t y[CMAC_BLOCK_SIZE] __aligned(IO_ALIGNMENT_BYTES);
+	uint8_t m_last[CMAC_BLOCK_SIZE] __aligned(IO_ALIGNMENT_BYTES);
+	uint8_t block[CMAC_BLOCK_SIZE] __aligned(IO_ALIGNMENT_BYTES);
+	uint8_t tag[CMAC_BLOCK_SIZE] __aligned(IO_ALIGNMENT_BYTES);
+	struct cipher_ctx ini = {
+		.keylen = sizeof(key),
+		.key.bit_stream = key,
+		.flags = cap_flags,
+	};
+	const size_t test_len[] = {40U, sizeof(plaintext)};
+	const uint8_t *expected[] = {cmac_expected_40, cmac_expected_64};
+	const char *labels[] = {"CMAC mode (len=40)", "CMAC mode (len=64)"};
+
+	if (cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
+				 CRYPTO_CIPHER_MODE_ECB,
+				 CRYPTO_CIPHER_OP_ENCRYPT)) {
+		return;
+	}
+
+	if (ecb_encrypt_block(&ini, x, l) != 0) {
+		LOG_ERR("CMAC subkey generation failed");
+		goto out;
+	}
+
+	cmac_left_shift_one_bit(l, k1);
+	if ((l[0] & 0x80U) != 0U) {
+		k1[CMAC_BLOCK_SIZE - 1] ^= CMAC_RB;
+	}
+
+	cmac_left_shift_one_bit(k1, k2);
+	if ((k1[0] & 0x80U) != 0U) {
+		k2[CMAC_BLOCK_SIZE - 1] ^= CMAC_RB;
+	}
+
+	for (size_t t = 0; t < ARRAY_SIZE(test_len); t++) {
+		size_t n_blocks = (test_len[t] == 0U) ? 1U :
+			((test_len[t] + CMAC_BLOCK_SIZE - 1U) / CMAC_BLOCK_SIZE);
+		size_t last_len = (test_len[t] == 0U) ? 0U : (test_len[t] % CMAC_BLOCK_SIZE);
+		bool complete_last = (test_len[t] != 0U) && (last_len == 0U);
+
+		memset(x, 0, sizeof(x));
+
+		if (complete_last) {
+			cmac_xor_128(plaintext + ((n_blocks - 1U) * CMAC_BLOCK_SIZE), k1, m_last);
+		} else {
+			memset(block, 0, sizeof(block));
+			if (last_len > 0U) {
+				memcpy(block, plaintext + ((n_blocks - 1U) * CMAC_BLOCK_SIZE), last_len);
+			}
+			block[last_len] = 0x80U;
+			cmac_xor_128(block, k2, m_last);
+		}
+
+		for (size_t i = 0; i + 1U < n_blocks; i++) {
+			cmac_xor_128(x, plaintext + (i * CMAC_BLOCK_SIZE), y);
+			if (ecb_encrypt_block(&ini, y, x) != 0) {
+				LOG_ERR("%s - Block processing failed", labels[t]);
+				goto out;
+			}
+		}
+
+		cmac_xor_128(x, m_last, y);
+		if (ecb_encrypt_block(&ini, y, tag) != 0) {
+			LOG_ERR("%s - Finalization failed", labels[t]);
+			goto out;
+		}
+
+		if (memcmp(tag, expected[t], CMAC_BLOCK_SIZE) != 0) {
+			LOG_ERR("%s - Tag mismatch", labels[t]);
+			print_buffer_comparison(expected[t], tag, CMAC_BLOCK_SIZE);
+			goto out;
+		}
+
+		LOG_INF("%s - Match", labels[t]);
+	}
+out:
+	cipher_free_session(dev, &ini);
+}
+
 /* RFC 3610 test vector #1 */
 const static uint8_t ccm_key[16] = {
 	0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xcb,
@@ -401,11 +533,22 @@ static const uint8_t ccm_expected[31] = {0x58, 0x8c, 0x97, 0x9a, 0x61, 0xc6, 0x6
 					 0xf0, 0x66, 0xd0, 0xc2, 0xc0, 0xf9, 0x89, 0x80,
 					 0x6d, 0x5f, 0x6b, 0x61, 0xda, 0xc3, 0x84, 0x17,
 					 0xe8, 0xd1, 0x2c, 0xfd, 0xf9, 0x26, 0xe0};
+static uint8_t ccm_zero_aad_nonce[13] = {
+	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
+	0x1c
+};
+static uint8_t ccm_zero_aad_data[16] __aligned(IO_ALIGNMENT_BYTES) = {
+	0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+	0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff
+};
 
 void ccm_mode(const struct device *dev)
 {
 	uint8_t encrypted[50] __aligned(IO_ALIGNMENT_BYTES);
 	uint8_t decrypted[32] __aligned(IO_ALIGNMENT_BYTES);
+	uint8_t tampered_tag[8] __aligned(IO_ALIGNMENT_BYTES);
+	uint8_t encrypted_zero_aad[24] __aligned(IO_ALIGNMENT_BYTES) = {0};
+	uint8_t decrypted_zero_aad[16] __aligned(IO_ALIGNMENT_BYTES) = {0};
 	struct cipher_ctx ini = {
 		.keylen = sizeof(ccm_key),
 		.key.bit_stream = ccm_key,
@@ -433,6 +576,25 @@ void ccm_mode(const struct device *dev)
 		.out_buf = decrypted,
 		.out_buf_max = sizeof(decrypted),
 	};
+	struct cipher_pkt encrypt_zero_aad = {
+		.in_buf = ccm_zero_aad_data,
+		.in_len = sizeof(ccm_zero_aad_data),
+		.out_buf_max = sizeof(encrypted_zero_aad),
+		.out_buf = encrypted_zero_aad,
+	};
+	struct cipher_aead_pkt ccm_zero_aad_op = {
+		.ad = NULL,
+		.ad_len = 0,
+		.pkt = &encrypt_zero_aad,
+		.tag = encrypted_zero_aad + sizeof(ccm_zero_aad_data),
+	};
+	struct cipher_pkt decrypt_zero_aad = {
+		.in_buf = encrypted_zero_aad,
+		.in_len = sizeof(ccm_zero_aad_data),
+		.out_buf = decrypted_zero_aad,
+		.out_buf_max = sizeof(decrypted_zero_aad),
+	};
+	int ret;
 
 	if (cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
 				 CRYPTO_CIPHER_MODE_CCM,
@@ -441,8 +603,9 @@ void ccm_mode(const struct device *dev)
 	}
 
 	ccm_op.pkt = &encrypt;
-	if (cipher_ccm_op(&ini, &ccm_op, ccm_nonce)) {
-		LOG_ERR("CCM mode ENCRYPT - Failed");
+	ret = cipher_ccm_op(&ini, &ccm_op, ccm_nonce);
+	if (ret != 0) {
+		LOG_ERR("CCM mode ENCRYPT - Failed (%d)", ret);
 		goto out;
 	}
 
@@ -466,8 +629,9 @@ void ccm_mode(const struct device *dev)
 	}
 
 	ccm_op.pkt = &decrypt;
-	if (cipher_ccm_op(&ini, &ccm_op, ccm_nonce)) {
-		LOG_ERR("CCM mode DECRYPT - Failed");
+	ret = cipher_ccm_op(&ini, &ccm_op, ccm_nonce);
+	if (ret != 0) {
+		LOG_ERR("CCM mode DECRYPT - Failed (%d)", ret);
 		goto out;
 	}
 
@@ -482,6 +646,78 @@ void ccm_mode(const struct device *dev)
 	}
 
 	LOG_INF("CCM mode DECRYPT - Match");
+	cipher_free_session(dev, &ini);
+
+	if (cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
+				 CRYPTO_CIPHER_MODE_CCM,
+				 CRYPTO_CIPHER_OP_DECRYPT)) {
+		return;
+	}
+
+	memcpy(tampered_tag, encrypted + sizeof(ccm_data), sizeof(tampered_tag));
+	tampered_tag[0] ^= 0x01;
+	memset(decrypted, 0, sizeof(decrypted));
+	ccm_op.pkt = &decrypt;
+	ccm_op.tag = tampered_tag;
+
+	ret = cipher_ccm_op(&ini, &ccm_op, ccm_nonce);
+	if (ret == 0) {
+		LOG_ERR("CCM mode DECRYPT tampered tag - Unexpected success");
+		goto out;
+	}
+
+	if (ret != -EBADMSG) {
+		LOG_ERR("CCM mode DECRYPT tampered tag - Unexpected error %d", ret);
+		goto out;
+	}
+
+	LOG_INF("CCM mode DECRYPT tampered tag - Match");
+	cipher_free_session(dev, &ini);
+
+	if (cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
+				 CRYPTO_CIPHER_MODE_CCM,
+				 CRYPTO_CIPHER_OP_ENCRYPT)) {
+		return;
+	}
+
+	ccm_zero_aad_op.pkt = &encrypt_zero_aad;
+	ret = cipher_ccm_op(&ini, &ccm_zero_aad_op, ccm_zero_aad_nonce);
+	if (ret != 0) {
+		LOG_ERR("CCM mode ENCRYPT zero AAD - Failed (%d)", ret);
+		goto out;
+	}
+
+	if (encrypt_zero_aad.out_len != sizeof(ccm_zero_aad_data)) {
+		LOG_ERR("CCM mode ENCRYPT zero AAD - Unexpected output length %d",
+			encrypt_zero_aad.out_len);
+		goto out;
+	}
+
+	LOG_INF("CCM mode ENCRYPT zero AAD - Match");
+	cipher_free_session(dev, &ini);
+
+	if (cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
+				 CRYPTO_CIPHER_MODE_CCM,
+				 CRYPTO_CIPHER_OP_DECRYPT)) {
+		return;
+	}
+
+	ccm_zero_aad_op.pkt = &decrypt_zero_aad;
+	ret = cipher_ccm_op(&ini, &ccm_zero_aad_op, ccm_zero_aad_nonce);
+	if (ret != 0) {
+		LOG_ERR("CCM mode DECRYPT zero AAD - Failed (%d)", ret);
+		goto out;
+	}
+
+	if (memcmp(decrypt_zero_aad.out_buf, ccm_zero_aad_data,
+		   sizeof(ccm_zero_aad_data)) != 0) {
+		LOG_ERR("CCM mode DECRYPT zero AAD - Mismatch between plaintext and decrypted cipher text");
+		print_buffer_comparison(ccm_zero_aad_data, decrypt_zero_aad.out_buf,
+					sizeof(ccm_zero_aad_data));
+		goto out;
+	}
+
+	LOG_INF("CCM mode DECRYPT zero AAD - Match");
 out:
 	cipher_free_session(dev, &ini);
 }
@@ -618,6 +854,7 @@ int main(void)
 		{ .mode = "ECB Mode", .mode_func = ecb_mode },
 		{ .mode = "CBC Mode", .mode_func = cbc_mode },
 		{ .mode = "CTR Mode", .mode_func = ctr_mode },
+		{ .mode = "CMAC Mode", .mode_func = cmac_mode },
 		{ .mode = "CCM Mode", .mode_func = ccm_mode },
 		{ .mode = "GCM Mode", .mode_func = gcm_mode },
 		{ },
