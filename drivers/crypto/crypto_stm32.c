@@ -33,6 +33,7 @@ LOG_MODULE_REGISTER(crypto_stm32);
 		      CAP_NO_IV_PREFIX)
 #define BLOCK_LEN_BYTES 16
 #define BLOCK_LEN_WORDS (BLOCK_LEN_BYTES / sizeof(uint32_t))
+#define CCM_FLAG_AAD_PRESENT BIT(6)
 #define CRYPTO_MAX_SESSION CONFIG_CRYPTO_STM32_MAX_SESSION
 
 #if defined(CRYP_KEYSIZE_192B)
@@ -162,6 +163,225 @@ static status_t hal_decrypt(CRYP_HandleTypeDef *hcryp, uint8_t *pCypherData, uin
 				Timeout);
 }
 #endif
+
+
+static int crypto_stm32_encrypt_block(struct cipher_ctx *ctx, const uint8_t *in, uint8_t *out)
+{
+	int ret;
+	struct crypto_stm32_session *session = CRYPTO_STM32_SESSN(ctx);
+
+#if !DT_HAS_COMPAT_STATUS_OKAY(st_stm32l4_aes)
+	uint32_t algo = session->config.Algorithm;
+
+	session->config.Algorithm = CRYP_AES_ECB;
+#endif
+
+	ret = do_aes(ctx, hal_ecb_encrypt_op, (uint8_t *)in, BLOCK_LEN_BYTES, out);
+
+#if !DT_HAS_COMPAT_STATUS_OKAY(st_stm32l4_aes)
+	session->config.Algorithm = algo;
+#endif
+
+	return ret;
+}
+
+static void crypto_stm32_xor_block(uint8_t *out, const uint8_t *a, const uint8_t *b)
+{
+	for (int i = 0; i < BLOCK_LEN_BYTES; i++) {
+		out[i] = a[i] ^ b[i];
+	}
+}
+
+static int crypto_stm32_ccm_auth_block(struct cipher_ctx *ctx, uint8_t *x, const uint8_t *b)
+{
+	uint8_t y[BLOCK_LEN_BYTES];
+
+	crypto_stm32_xor_block(y, x, b);
+	return crypto_stm32_encrypt_block(ctx, y, x);
+}
+
+static void crypto_stm32_ccm_format_ctr(uint8_t *ctr, const uint8_t *nonce, uint8_t nonce_len,
+					uint8_t q, uint32_t counter)
+{
+	ctr[0] = q - 1U;
+	memcpy(&ctr[1], nonce, nonce_len);
+	for (int i = 0; i < q; i++) {
+		ctr[BLOCK_LEN_BYTES - 1 - i] = (counter >> (8 * i)) & 0xFF;
+	}
+}
+
+static int crypto_stm32_ccm_auth_aad(struct cipher_ctx *ctx, uint8_t *x, const uint8_t *aad,
+				     uint32_t aad_len)
+{
+	uint8_t block[BLOCK_LEN_BYTES] = {0};
+	uint32_t copied = 0U;
+	uint32_t pos;
+
+	if (aad_len == 0U) {
+		return 0;
+	}
+
+	if (aad_len < 0xFF00U) {
+		block[0] = (aad_len >> 8) & 0xFF;
+		block[1] = aad_len & 0xFF;
+		pos = 2U;
+	} else {
+		block[0] = 0xFF;
+		block[1] = 0xFE;
+		block[2] = (aad_len >> 24) & 0xFF;
+		block[3] = (aad_len >> 16) & 0xFF;
+		block[4] = (aad_len >> 8) & 0xFF;
+		block[5] = aad_len & 0xFF;
+		pos = 6U;
+	}
+
+	while ((pos < BLOCK_LEN_BYTES) && (copied < aad_len)) {
+		block[pos++] = aad[copied++];
+	}
+
+	if (crypto_stm32_ccm_auth_block(ctx, x, block) != 0) {
+		return -EIO;
+	}
+
+	while (copied < aad_len) {
+		memset(block, 0, sizeof(block));
+		pos = 0U;
+		while ((pos < BLOCK_LEN_BYTES) && (copied < aad_len)) {
+			block[pos++] = aad[copied++];
+		}
+
+		if (crypto_stm32_ccm_auth_block(ctx, x, block) != 0) {
+			return -EIO;
+		}
+	}
+
+	return 0;
+}
+
+static int crypto_stm32_ccm_crypt(struct cipher_ctx *ctx, struct cipher_aead_pkt *pkt,
+				  uint8_t *nonce, bool encrypt)
+{
+	struct cipher_pkt *cpkt = pkt->pkt;
+	uint8_t tag_len = ctx->mode_params.ccm_info.tag_len;
+	uint8_t nonce_len = ctx->mode_params.ccm_info.nonce_len;
+	uint8_t q;
+	uint8_t b0[BLOCK_LEN_BYTES] = {0};
+	uint8_t x[BLOCK_LEN_BYTES] = {0};
+	uint8_t s0[BLOCK_LEN_BYTES];
+	uint8_t ctr[BLOCK_LEN_BYTES];
+	uint8_t block[BLOCK_LEN_BYTES];
+	uint32_t counter = 1U;
+	uint32_t offset = 0U;
+
+	if ((cpkt == NULL) || (nonce == NULL) || (pkt->tag == NULL)) {
+		return -EINVAL;
+	}
+
+	if ((cpkt->in_len < 0) || (cpkt->in_buf == NULL) || (cpkt->out_buf == NULL) ||
+	    (cpkt->out_buf_max < cpkt->in_len)) {
+		return -EINVAL;
+	}
+
+	if ((tag_len < 4U) || (tag_len > 16U) || ((tag_len & 1U) != 0U)) {
+		return -EINVAL;
+	}
+
+	if ((nonce_len < 7U) || (nonce_len > 13U)) {
+		return -EINVAL;
+	}
+
+	q = 15U - nonce_len;
+
+	b0[0] = (uint8_t)((((tag_len - 2U) / 2U) << 3) | (q - 1U));
+	if (pkt->ad_len > 0U) {
+		b0[0] |= CCM_FLAG_AAD_PRESENT;
+	}
+	memcpy(&b0[1], nonce, nonce_len);
+	for (int i = 0; i < q; i++) {
+		b0[BLOCK_LEN_BYTES - 1 - i] = ((uint32_t)cpkt->in_len >> (8 * i)) & 0xFF;
+	}
+
+	if (crypto_stm32_ccm_auth_block(ctx, x, b0) != 0) {
+		return -EIO;
+	}
+
+	if (crypto_stm32_ccm_auth_aad(ctx, x, pkt->ad, pkt->ad_len) != 0) {
+		return -EIO;
+	}
+
+	while (offset < (uint32_t)cpkt->in_len) {
+		uint32_t chunk = MIN((uint32_t)BLOCK_LEN_BYTES, (uint32_t)cpkt->in_len - offset);
+
+		memset(block, 0, sizeof(block));
+		if (encrypt) {
+			memcpy(block, &cpkt->in_buf[offset], chunk);
+		} else {
+			uint8_t stream[BLOCK_LEN_BYTES];
+
+			crypto_stm32_ccm_format_ctr(ctr, nonce, nonce_len, q, counter);
+			if (crypto_stm32_encrypt_block(ctx, ctr, stream) != 0) {
+				return -EIO;
+			}
+			for (uint32_t i = 0; i < chunk; i++) {
+				block[i] = cpkt->in_buf[offset + i] ^ stream[i];
+				cpkt->out_buf[offset + i] = block[i];
+			}
+		}
+
+		if (crypto_stm32_ccm_auth_block(ctx, x, block) != 0) {
+			return -EIO;
+		}
+
+		if (encrypt) {
+			crypto_stm32_ccm_format_ctr(ctr, nonce, nonce_len, q, counter);
+			if (crypto_stm32_encrypt_block(ctx, ctr, block) != 0) {
+				return -EIO;
+			}
+			for (uint32_t i = 0; i < chunk; i++) {
+				cpkt->out_buf[offset + i] = cpkt->in_buf[offset + i] ^ block[i];
+			}
+		}
+
+		offset += chunk;
+		counter++;
+	}
+
+	crypto_stm32_ccm_format_ctr(ctr, nonce, nonce_len, q, 0U);
+	if (crypto_stm32_encrypt_block(ctx, ctr, s0) != 0) {
+		return -EIO;
+	}
+
+	if (encrypt) {
+		for (uint8_t i = 0; i < tag_len; i++) {
+			pkt->tag[i] = x[i] ^ s0[i];
+		}
+	} else {
+		uint8_t expected_tag[BLOCK_LEN_BYTES];
+
+		for (uint8_t i = 0; i < tag_len; i++) {
+			expected_tag[i] = x[i] ^ s0[i];
+		}
+
+		if (memcmp(expected_tag, pkt->tag, tag_len) != 0) {
+			return -EBADMSG;
+		}
+	}
+
+	cpkt->out_len = cpkt->in_len;
+	return 0;
+}
+
+static int crypto_stm32_ccm_encrypt(struct cipher_ctx *ctx,
+				    struct cipher_aead_pkt *pkt, uint8_t *nonce)
+{
+	return crypto_stm32_ccm_crypt(ctx, pkt, nonce, true);
+}
+
+static int crypto_stm32_ccm_decrypt(struct cipher_ctx *ctx,
+				    struct cipher_aead_pkt *pkt, uint8_t *nonce)
+{
+	return crypto_stm32_ccm_crypt(ctx, pkt, nonce, false);
+}
 
 static int crypto_stm32_ecb_encrypt(struct cipher_ctx *ctx,
 				    struct cipher_pkt *pkt)
@@ -354,7 +574,8 @@ static int crypto_stm32_session_setup(const struct device *dev,
 	 */
 	if ((mode != CRYPTO_CIPHER_MODE_ECB) &&
 	    (mode != CRYPTO_CIPHER_MODE_CBC) &&
-	    (mode != CRYPTO_CIPHER_MODE_CTR)) {
+	    (mode != CRYPTO_CIPHER_MODE_CTR) &&
+	    (mode != CRYPTO_CIPHER_MODE_CCM)) {
 		LOG_ERR("Unsupported mode");
 		return -ENOTSUP;
 	}
@@ -425,6 +646,9 @@ static int crypto_stm32_session_setup(const struct device *dev,
 #endif
 			ctx->ops.ctr_crypt_hndlr = crypto_stm32_ctr_encrypt;
 			break;
+		case CRYPTO_CIPHER_MODE_CCM:
+			ctx->ops.ccm_crypt_hndlr = crypto_stm32_ccm_encrypt;
+			break;
 		default:
 			break;
 		}
@@ -447,6 +671,9 @@ static int crypto_stm32_session_setup(const struct device *dev,
 			session->config.Algorithm = CRYP_AES_CTR;
 #endif
 			ctx->ops.ctr_crypt_hndlr = crypto_stm32_ctr_decrypt;
+			break;
+		case CRYPTO_CIPHER_MODE_CCM:
+			ctx->ops.ccm_crypt_hndlr = crypto_stm32_ccm_decrypt;
 			break;
 		default:
 			break;
