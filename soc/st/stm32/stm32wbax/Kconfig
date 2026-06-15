@@ -57,4 +57,12 @@ config STM32WBA_BLE_CTLR_THREAD_PRIO
 	help
 	  This option sets the cooperative priority of the BLE Controller thread.
 
+config STM32WBA_RT_DEBUG_IO_DTB
+	bool "Real Time Debug IOs for DTB Usage"
+	default n
+	depends on BT_STM32WBA || IEEE802154_STM32WBA
+	help
+	   This option enables the Real Time Debug module to provide HW signals 
+	   from RF PHY activity.
+
 endif # SOC_SERIES_STM32WBAX
