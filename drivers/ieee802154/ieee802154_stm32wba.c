@@ -77,13 +77,14 @@ IEEE802154_DEFINE_PHY_SUPPORTED_CHANNELS(drv_attr, 11, 26);
 
 
 static void stm32wba_802154_receive_done(uint8_t *p_buffer,
-					 stm32wba_802154_ral_receive_done_metadata_t *p_metadata);
+					 st_802154_ral_receive_done_metadata_t *p_metadata);
 void stm32wba_802154_tx_ack_started(bool ack_fpb, bool ack_seb);
+void stm32wba_802154_cbk_tx_started(void);
 static void stm32wba_802154_transmit_done(
 				uint8_t *p_frame,
-				stm32wba_802154_ral_error_t error,
-				const stm32wba_802154_ral_transmit_done_metadata_t *p_metadata);
-static void stm32wba_802154_cca_done(stm32wba_802154_ral_error_t error);
+				st_802154_ral_error_t error,
+				const st_802154_ral_transmit_done_metadata_t *p_metadata);
+static void stm32wba_802154_cca_done(uint8_t error);
 static void stm32wba_802154_energy_scan_done(int8_t ed_result);
 
 static const struct device *stm32wba_802154_get_device(void)
@@ -95,7 +96,7 @@ static const struct device *stm32wba_802154_get_device(void)
 
 static void stm32wba_802154_get_eui64(uint8_t *mac)
 {
-	stm32wba_802154_ral_eui64_get(mac);
+	st_802154_ral_eui64_get(mac);
 
 	LOG_DBG("Device EUI64: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x",
 		mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], mac[6], mac[7]);
@@ -168,19 +169,19 @@ static void stm32wba_802154_rx_thread(void *arg1, void *arg2, void *arg3)
 	}
 }
 
-static void stm32wba_802154_receive_failed(stm32wba_802154_ral_error_t error)
+static void stm32wba_802154_receive_failed(st_802154_ral_error_t error)
 {
 	const struct device *dev = stm32wba_802154_get_device();
 	enum ieee802154_rx_fail_reason reason;
 
 	switch (error) {
-	case STM32WBA_802154_RAL_ERROR_FCS:
+	case ST_802154_RAL_ERROR_FCS:
 		reason = IEEE802154_RX_FAIL_INVALID_FCS;
 		break;
-	case STM32WBA_802154_RAL_ERROR_NO_FRAME_RECEIVED:
+	case ST_802154_RAL_ERROR_NO_FRAME_RECEIVED:
 		reason = IEEE802154_RX_FAIL_NOT_RECEIVED;
 		break;
-	case STM32WBA_802154_RAL_ERROR_DESTINATION_ADDRESS_FILTERED:
+	case ST_802154_RAL_ERROR_DESTINATION_ADDRESS_FILTERED:
 		reason = IEEE802154_RX_FAIL_ADDR_FILTERED;
 		break;
 	default:
@@ -204,56 +205,57 @@ static void stm32wba_802154_receive_failed(stm32wba_802154_ral_error_t error)
 static int stm32wba_802154_configure_extended(enum ieee802154_stm32wba_config_type type,
 					      const struct ieee802154_stm32wba_config *config)
 {
-	stm32wba_802154_ral_error_t ret;
+	st_802154_ral_error_t ret;
 
 	switch (type) {
 	case IEEE802154_STM32WBA_CONFIG_CCA_THRESHOLD:
 		LOG_DBG("Setting CCA_THRESHOLD: %d", config->cca_thr);
-		ret = stm32wba_802154_ral_set_cca_energy_detect_threshold(config->cca_thr);
-		if (ret != STM32WBA_802154_RAL_ERROR_NONE) {
+		ret = st_802154_ral_set_cca_energy_detect_threshold(config->cca_thr);
+		if (ret != ST_802154_RAL_ERROR_NONE) {
 			return -EIO;
 		}
 		break;
 
 	case IEEE802154_STM32WBA_CONFIG_CONTINUOUS_RECEPTION:
 		LOG_DBG("Setting CONTINUOUS_RECEPTION: %u", config->en_cont_rec);
-		stm32wba_802154_ral_set_continuous_reception(config->en_cont_rec);
+		st_802154_ral_set_continuous_reception(config->en_cont_rec);
 		break;
 
 	case IEEE802154_STM32WBA_CONFIG_MAX_FRAME_RETRIES:
 		LOG_DBG("Setting MAX_FRAME_RETRIES: %u", config->max_frm_retries);
-		stm32wba_802154_ral_set_max_frame_retries(config->max_frm_retries);
+		stm32wba_802154_data.max_frame_retries = config->max_frm_retries;
+		st_802154_ral_set_max_frame_retries(config->max_frm_retries);
 		break;
 
 	case IEEE802154_STM32WBA_CONFIG_MAX_CSMA_FRAME_RETRIES:
 		LOG_DBG("Setting MAX_CSMA_FRAME_RETRIES: %u", config->max_csma_frm_retries);
-		stm32wba_802154_ral_set_max_csma_frame_retries(config->max_csma_frm_retries);
+		st_802154_ral_set_max_csma_frame_retries(config->max_csma_frm_retries);
 		break;
 
 	case IEEE802154_STM32WBA_CONFIG_MIN_CSMA_BE:
 		LOG_DBG("Setting MIN_CSMA_BE: %u", config->min_csma_be);
-		stm32wba_802154_ral_set_min_csma_be(config->min_csma_be);
+		st_802154_ral_set_min_csma_be(config->min_csma_be);
 		break;
 
 	case IEEE802154_STM32WBA_CONFIG_MAX_CSMA_BE:
 		LOG_DBG("Setting MAX_CSMA_BE: %u", config->max_csma_be);
-		stm32wba_802154_ral_set_max_csma_be(config->max_csma_be);
+		st_802154_ral_set_max_csma_be(config->max_csma_be);
 		break;
 
 	case IEEE802154_STM32WBA_CONFIG_MAX_CSMA_BACKOFF:
 		LOG_DBG("Setting MAX_CSMA_BACKOFF: %u", config->max_csma_backoff);
-		stm32wba_802154_ral_set_max_csma_backoff(config->max_csma_backoff);
+		st_802154_ral_set_max_csma_backoff(config->max_csma_backoff);
 		break;
 
 	case IEEE802154_STM32WBA_CONFIG_IMPLICIT_BROADCAST:
 		LOG_DBG("Setting IMPLICIT_BROADCAST: %u", config->impl_brdcast);
-		stm32wba_802154_ral_set_implicitbroadcast(config->impl_brdcast);
+		st_802154_ral_set_implicit_broadcast(config->impl_brdcast);
 		break;
 
 	case IEEE802154_STM32WBA_CONFIG_ANTENNA_DIV:
 		LOG_DBG("Setting ANTENNA_DIV: %u", config->ant_div);
-		ret = stm32wba_802154_ral_set_ant_div_enable(config->ant_div);
-		if (ret != STM32WBA_802154_RAL_ERROR_NONE) {
+		ret = st_802154_ral_set_ant_div_enable(config->ant_div);
+		if (ret != ST_802154_RAL_ERROR_NONE) {
 			return -EIO;
 		}
 		break;
@@ -268,8 +270,8 @@ static int stm32wba_802154_configure_extended(enum ieee802154_stm32wba_config_ty
 		stm32wba_802154_data.ack_frame.psdu = NULL;
 		stm32wba_802154_data.ack_frame.length = 0;
 
-		ret = stm32wba_802154_ral_radio_reset();
-		if (ret != STM32WBA_802154_RAL_ERROR_NONE) {
+		ret = st_802154_ral_radio_reset();
+		if (ret != ST_802154_RAL_ERROR_NONE) {
 			return -EIO;
 		}
 		break;
@@ -285,15 +287,15 @@ static int stm32wba_802154_configure_extended(enum ieee802154_stm32wba_config_ty
 static int stm32wba_802154_attr_get_extended(enum ieee802154_stm32wba_attr attr,
 					     struct ieee802154_stm32wba_attr_value *value)
 {
-	stm32wba_802154_ral_error_t ret;
+	st_802154_ral_error_t ret;
 
 	switch ((uint32_t)attr) {
 	case IEEE802154_STM32WBA_ATTR_CCA_THRESHOLD:
 		static int8_t l_cca_thr;
 
 		LOG_DBG("Getting CCA_THRESHOLD attribute");
-		ret = stm32wba_802154_ral_get_cca_energy_detect_threshold(&l_cca_thr);
-		if (ret != STM32WBA_802154_RAL_ERROR_NONE) {
+		ret = st_802154_ral_get_cca_energy_detect_threshold(&l_cca_thr);
+		if (ret != ST_802154_RAL_ERROR_NONE) {
 			return -ENOENT;
 		}
 		value->cca_thr = &l_cca_thr;
@@ -303,7 +305,7 @@ static int stm32wba_802154_attr_get_extended(enum ieee802154_stm32wba_attr attr,
 		uint8_t l_eui64[sizeof(value->eui64)];
 
 		LOG_DBG("Getting IEEE_EUI64 attribute");
-		stm32wba_802154_get_eui64(l_eui64);
+		st_802154_ral_eui64_get(l_eui64);
 		memcpy(value->eui64, l_eui64, sizeof(l_eui64));
 		break;
 
@@ -311,8 +313,8 @@ static int stm32wba_802154_attr_get_extended(enum ieee802154_stm32wba_attr attr,
 		static uint8_t l_tx_power;
 
 		LOG_DBG("Getting TX_POWER attribute");
-		ret = stm32wba_802154_ral_tx_power_get(&l_tx_power);
-		if (ret != STM32WBA_802154_RAL_ERROR_NONE) {
+		ret = st_802154_ral_tx_power_get(&l_tx_power);
+		if (ret != ST_802154_RAL_ERROR_NONE) {
 			return -ENOENT;
 		}
 		value->tx_power = &l_tx_power;
@@ -322,8 +324,8 @@ static int stm32wba_802154_attr_get_extended(enum ieee802154_stm32wba_attr attr,
 		static uint8_t l_rand_num;
 
 		LOG_DBG("Getting RAND_NUM attribute");
-		ret = stm32wba_802154_ral_mac_gen_rnd_num(&l_rand_num, 1, true);
-		if (ret != STM32WBA_802154_RAL_ERROR_NONE) {
+		ret = st_802154_ral_mac_gen_rnd_num(&l_rand_num, 1, true);
+		if (ret != ST_802154_RAL_ERROR_NONE) {
 			return -ENOENT;
 		}
 		value->rand_num = &l_rand_num;
@@ -372,7 +374,7 @@ static int stm32wba_802154_cca(const struct device *dev)
 {
 	struct stm32wba_802154_data_t *stm32wba_radio = dev->data;
 
-	if (stm32wba_802154_ral_cca() != STM32WBA_802154_RAL_ERROR_NONE) {
+	if (st_802154_ral_cca() != ST_802154_RAL_ERROR_NONE) {
 		LOG_DBG("CCA failed");
 		return -EBUSY;
 	}
@@ -400,7 +402,7 @@ static int stm32wba_802154_set_channel(const struct device *dev, uint16_t channe
 	}
 
 	LOG_DBG("Setting channel %u", channel);
-	stm32wba_802154_ral_set_channel(channel);
+	st_802154_ral_set_channel(channel);
 
 	stm32wba_802154_data.channel = channel;
 
@@ -412,7 +414,8 @@ static int stm32wba_802154_energy_scan_start(const struct device *dev,
 					     energy_scan_done_cb_t done_cb)
 {
 	int err = 0;
-	stm32wba_802154_ral_error_t ret;
+	st_802154_ral_error_t ret;
+	st_802154_ral_scan_ed_metadata_t metadata;
 
 	ARG_UNUSED(dev);
 
@@ -420,8 +423,9 @@ static int stm32wba_802154_energy_scan_start(const struct device *dev,
 
 	if (stm32wba_802154_data.energy_scan_done_cb == NULL) {
 		stm32wba_802154_data.energy_scan_done_cb = done_cb;
-		ret = stm32wba_802154_ral_energy_detection(duration);
-		if (ret != STM32WBA_802154_RAL_ERROR_NONE) {
+		metadata.channel = stm32wba_802154_data.channel;
+		ret = st_802154_ral_energy_detection(duration, &metadata);
+		if (ret != ST_802154_RAL_ERROR_NONE) {
 			LOG_ERR("Energy detection failed, device is busy");
 			stm32wba_802154_data.energy_scan_done_cb = NULL;
 			err = -EBUSY;
@@ -452,17 +456,17 @@ static int stm32wba_802154_filter(const struct device *dev, bool set,
 			filter->ieee_addr[0], filter->ieee_addr[1], filter->ieee_addr[2],
 			filter->ieee_addr[3], filter->ieee_addr[4], filter->ieee_addr[5],
 			filter->ieee_addr[6], filter->ieee_addr[7]);
-		stm32wba_802154_ral_extended_address_set(filter->ieee_addr);
+		st_802154_ral_extended_address_set(filter->ieee_addr);
 		break;
 
 	case IEEE802154_FILTER_TYPE_SHORT_ADDR:
 		LOG_DBG("Setting short address filter to 0x%04x", filter->short_addr);
-		stm32wba_802154_ral_short_address_set(filter->short_addr);
+		st_802154_ral_short_address_set(filter->short_addr);
 		break;
 
 	case IEEE802154_FILTER_TYPE_PAN_ID:
 		LOG_DBG("Setting PAN ID filter to 0x%04x", filter->pan_id);
-		stm32wba_802154_ral_pan_id_set(filter->pan_id);
+		st_802154_ral_pan_id_set(filter->pan_id);
 		break;
 
 	default:
@@ -484,10 +488,13 @@ static int stm32wba_802154_set_txpower(const struct device *dev, int16_t dbm)
 		return -EINVAL;
 	}
 
-	stm32wba_802154_ral_tx_power_set(dbm);
-	stm32wba_802154_data.txpwr = dbm;
-
-	LOG_DBG("Setting TX power to %d dBm", dbm);
+	if (st_802154_ral_tx_power_set(dbm) != ST_802154_RAL_ERROR_NONE) {
+		LOG_ERR("Failed to set TX power: %d dBm", dbm);
+		return -EIO;
+	} else {
+		LOG_DBG("Setting TX power to %d dBm", dbm);
+		stm32wba_802154_data.txpwr = dbm;	
+	}
 
 	return 0;
 }
@@ -546,20 +553,38 @@ static void stm32wba_802154_tx_started(const struct device *dev,
 	}
 }
 
-static stm32wba_802154_ral_error_t stm32wba_802154_transmit(struct net_pkt *pkt,
-					       uint8_t *payload, uint8_t payload_len, bool cca)
+static st_802154_ral_error_t stm32wba_802154_transmit(struct net_pkt *pkt,
+						      uint8_t *payload,
+						      uint8_t payload_len,
+						      bool cca)
 {
 	LOG_DBG("TX frame - sequence nb: %u, length: %u", payload[2], payload_len);
 
-	stm32wba_802154_ral_transmit_metadata_t metadata = {
+	st_802154_ral_transmit_metadata_t metadata = {
 		.is_secured = net_pkt_ieee802154_frame_secured(pkt),
 		.dynamic_data_is_set = net_pkt_ieee802154_mac_hdr_rdy(pkt),
 		.cca = cca,
 		.tx_power = stm32wba_802154_data.txpwr,
-		.tx_channel = stm32wba_802154_ral_channel_get()
+		.tx_channel = st_802154_ral_channel_get(),
+		.is_retx = 0,/*net_pkt_ieee802154_frame_is_retx(pkt),*/
+		.csl_present = 0,/*manage this when CSL feature is supported*/
+#if defined(CONFIG_NET_L2_OPENTHREAD)
+		.max_csma_backoffs = 4,
+		.max_frame_retries = 0,
+#else
+		.max_csma_backoffs = stm32wba_802154_data.max_csma_backoffs,
+		.max_frame_retries = stm32wba_802154_data.max_frame_retries,
+#endif /* CONFIG_NET_L2_OPENTHREAD */
+		.tx_delay = 0,
+		.tx_delay_base_time = 0,
+		.timestamp = 0,
+		.ie_info_ptr = NULL,
+		.aes_key_ptr = NULL,
+		.rx_channel_after_tx_done = st_802154_ral_channel_get(),
+
 	};
 
-	return stm32wba_802154_ral_transmit(payload, payload_len, &metadata);
+	return st_802154_ral_transmit(payload, payload_len, &metadata);
 }
 
 static int stm32wba_802154_tx(const struct device *dev,
@@ -569,7 +594,7 @@ static int stm32wba_802154_tx(const struct device *dev,
 {
 	uint8_t payload_len = frag->len + IEEE802154_FCS_LENGTH;
 	uint8_t *payload = frag->data;
-	stm32wba_802154_ral_error_t err;
+	st_802154_ral_error_t err;
 
 	if (payload_len > IEEE802154_MTU + IEEE802154_FCS_LENGTH) {
 		LOG_ERR("Payload too large: %d", payload_len);
@@ -607,7 +632,7 @@ static int stm32wba_802154_tx(const struct device *dev,
 		return -ENOTSUP;
 	}
 
-	if (err != STM32WBA_802154_RAL_ERROR_NONE) {
+	if (err != ST_802154_RAL_ERROR_NONE) {
 		stm32wba_tx_wait_pending = false;
 		LOG_ERR("Cannot send frame");
 		return -EIO;
@@ -632,20 +657,20 @@ static int stm32wba_802154_tx(const struct device *dev,
 	net_pkt_set_ieee802154_mac_hdr_rdy(pkt, stm32wba_802154_data.tx_frame_mac_hdr_rdy);
 
 	switch (stm32wba_802154_data.tx_result) {
-	case STM32WBA_802154_RAL_ERROR_NONE:
+	case ST_802154_RAL_ERROR_NONE:
 		if (stm32wba_802154_data.ack_frame.psdu == NULL) {
 			/* No ACK was requested. */
 			return 0;
 		}
 		/* Handle ACK packet. */
 		return handle_ack(&stm32wba_802154_data);
-	case STM32WBA_802154_RAL_ERROR_NO_BUFS:
+	case ST_802154_RAL_ERROR_NO_BUFS:
 		return -ENOBUFS;
-	case STM32WBA_802154_RAL_ERROR_CHANNEL_ACCESS_FAILURE:
+	case ST_802154_RAL_ERROR_CHANNEL_ACCESS_FAILURE:
 		return -EBUSY;
-	case STM32WBA_802154_RAL_ERROR_NO_ACK:
+	case ST_802154_RAL_ERROR_NO_ACK:
 		return -ENOMSG;
-	case STM32WBA_802154_RAL_ERROR_ABORT:
+	case ST_802154_RAL_ERROR_ABORT:
 	default:
 		return -EIO;
 	}
@@ -655,7 +680,7 @@ static net_time_t stm32wba_802154_get_time(const struct device *dev)
 {
 	ARG_UNUSED(dev);
 
-	return (net_time_t)stm32wba_802154_ral_time_get() * NSEC_PER_USEC;
+	return (net_time_t)st_802154_ral_time_get() * NSEC_PER_USEC;
 }
 
 static uint8_t stm32wba_802154_get_acc(const struct device *dev)
@@ -670,21 +695,21 @@ static int stm32wba_802154_start(const struct device *dev)
 	ARG_UNUSED(dev);
 
 	/* Set Channel */
-	stm32wba_802154_ral_set_channel(stm32wba_802154_data.channel);
+	st_802154_ral_set_channel(stm32wba_802154_data.channel);
 
-	stm32wba_802154_ral_tx_power_set(stm32wba_802154_data.txpwr);
+	st_802154_ral_tx_power_set(stm32wba_802154_data.txpwr);
 
 	/* Configure continuous reception mode */
-	stm32wba_802154_ral_set_continuous_reception(stm32wba_802154_data.rx_on_when_idle);
+	st_802154_ral_set_continuous_reception(stm32wba_802154_data.rx_on_when_idle);
 
 	/* Set the radio in Receive State */
-	if (stm32wba_802154_ral_receive() != STM32WBA_802154_RAL_ERROR_NONE) {
+	if (st_802154_ral_receive(stm32wba_802154_data.channel) != ST_802154_RAL_ERROR_NONE) {
 		LOG_ERR("Failed to enter receive state");
 		return -EIO;
 	}
 
 	LOG_DBG("802.15.4 radio started on channel: %u",
-		stm32wba_802154_ral_channel_get());
+		st_802154_ral_channel_get());
 
 	return 0;
 }
@@ -694,10 +719,10 @@ static int stm32wba_802154_stop(const struct device *dev)
 	ARG_UNUSED(dev);
 
 	/* Disable continuous reception mode */
-	stm32wba_802154_ral_set_continuous_reception(false);
+	st_802154_ral_set_continuous_reception(false);
 
 	/* Set the radio in Sleep state */
-	if (stm32wba_802154_ral_sleep() != STM32WBA_802154_RAL_ERROR_NONE) {
+	if (st_802154_ral_sleep() != ST_802154_RAL_ERROR_NONE) {
 		LOG_ERR("Error while stopping radio");
 		return -EIO;
 	}
@@ -718,18 +743,18 @@ static int stm32wba_802154_driver_init(const struct device *dev)
 	k_sem_init(&stm32wba_802154_data.tx_wait, 0, 1);
 	k_sem_init(&stm32wba_802154_data.cca_wait, 0, 1);
 #if defined(CONFIG_NET_L2_OPENTHREAD)
-	stm32wba_802154_ral_set_config_lib_params(1, 0);
+	st_802154_ral_set_config_lib_params(1, 0, 0);
 #else
-	stm32wba_802154_ral_set_config_lib_params(0, 1);
+	st_802154_ral_set_config_lib_params(0, 1, 0);
 #endif /* CONFIG_NET_L2_OPENTHREAD */
-	stm32wba_802154_ral_init();
-	stm32wba_802154_ral_promiscuous_set(false);
+	st_802154_ral_init();
+	st_802154_ral_promiscuous_set(false);
 #if !defined(CONFIG_NET_L2_CUSTOM_IEEE802154_STM32WBA) && !defined(CONFIG_NET_L2_OPENTHREAD)
 	stm32wba_802154_data.rx_on_when_idle = true;
 #else
 	stm32wba_802154_data.rx_on_when_idle = false;
 #endif /* CONFIG_NET_L2_CUSTOM_IEEE802154_STM32WBA && CONFIG_NET_L2_OPENTHREAD */
-	stm32wba_802154_ral_set_continuous_reception(stm32wba_802154_data.rx_on_when_idle);
+	st_802154_ral_set_continuous_reception(stm32wba_802154_data.rx_on_when_idle);
 
 	stm32wba_802154_data.channel = 0;
 
@@ -747,12 +772,13 @@ static int stm32wba_802154_driver_init(const struct device *dev)
 
 static void stm32wba_802154_iface_init(struct net_if *iface)
 {
-	static struct stm32wba_802154_ral_cbk_dispatch_tbl ll_cbk_dispatch_tbl = {
-		.stm32wba_802154_ral_cbk_ed_scan_done = stm32wba_802154_energy_scan_done,
-		.stm32wba_802154_ral_cbk_tx_done = stm32wba_802154_transmit_done,
-		.stm32wba_802154_ral_cbk_rx_done = stm32wba_802154_receive_done,
-		.stm32wba_802154_ral_cbk_cca_done = stm32wba_802154_cca_done,
-		.stm32wba_802154_ral_cbk_tx_ack_started = stm32wba_802154_tx_ack_started,
+	static struct st_802154_ral_cbk_dispatch_tbl ll_cbk_dispatch_tbl = {
+		.st_802154_ral_cbk_ed_scan_done = stm32wba_802154_energy_scan_done,
+		.st_802154_ral_cbk_tx_done = stm32wba_802154_transmit_done,
+		.st_802154_ral_cbk_rx_done = stm32wba_802154_receive_done,
+		.st_802154_ral_cbk_cca_done = stm32wba_802154_cca_done,
+		.st_802154_ral_cbk_tx_ack_started = stm32wba_802154_tx_ack_started,
+		.st_802154_ral_cbk_tx_started = stm32wba_802154_cbk_tx_started,
 	};
 
 	link_layer_register_isr();
@@ -760,11 +786,14 @@ static void stm32wba_802154_iface_init(struct net_if *iface)
 #if !defined(CONFIG_NET_L2_CUSTOM_IEEE802154_STM32WBA)
 	ll_sys_thread_init();
 	/* Intentionally discard the return values */
-	(void)stm32wba_802154_ral_set_max_csma_backoff(MAX_CSMA_BACKOFF);
-	(void)stm32wba_802154_ral_set_max_frame_retries(MAX_FRAME_RETRY);
-	(void)stm32wba_802154_ral_set_cca_energy_detect_threshold(CCA_THRESHOLD);
+	(void)st_802154_ral_set_max_csma_backoff(MAX_CSMA_BACKOFF);
+	(void)st_802154_ral_set_max_frame_retries(MAX_FRAME_RETRY);
+	(void)st_802154_ral_set_cca_energy_detect_threshold(CCA_THRESHOLD);
+
+	stm32wba_802154_data.max_csma_backoffs = MAX_CSMA_BACKOFF;
+	stm32wba_802154_data.max_frame_retries = MAX_FRAME_RETRY;
 #endif
-	stm32wba_802154_ral_call_back_funcs_init(&ll_cbk_dispatch_tbl);
+	st_802154_ral_call_back_funcs_init(&ll_cbk_dispatch_tbl);
 
 	stm32wba_802154_get_eui64(stm32wba_802154_data.mac);
 	net_if_set_link_addr(iface, stm32wba_802154_data.mac,
@@ -782,12 +811,12 @@ static void stm32wba_802154_iface_init(struct net_if *iface)
 static int stm32wba_802154_set_ack_fpb(const struct ieee802154_config *config)
 {
 	int err = 0;
-	stm32wba_802154_ral_error_t ret;
+	st_802154_ral_error_t ret;
 
 	if (config->ack_fpb.extended) {
-		ret = stm32wba_802154_ral_pending_bit_for_ext_addr_set(
+		ret = st_802154_ral_pending_bit_for_ext_addr_set(
 							(const uint8_t *)config->ack_fpb.addr);
-		if (ret != STM32WBA_802154_RAL_ERROR_NONE) {
+		if (ret != ST_802154_RAL_ERROR_NONE) {
 			LOG_ERR("Failed to set ACK_FPB for extended address: "
 				"%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x",
 				config->ack_fpb.addr[0], config->ack_fpb.addr[1],
@@ -807,8 +836,8 @@ static int stm32wba_802154_set_ack_fpb(const struct ieee802154_config *config)
 		uint16_t short_addr = (uint16_t)config->ack_fpb.addr[0] |
 				      (uint16_t)(config->ack_fpb.addr[1] << 8);
 
-		ret = stm32wba_802154_ral_pending_bit_for_short_addr_set(short_addr);
-		if (ret != STM32WBA_802154_RAL_ERROR_NONE) {
+		ret = st_802154_ral_pending_bit_for_short_addr_set(short_addr);
+		if (ret != ST_802154_RAL_ERROR_NONE) {
 			LOG_ERR("Failed to set ACK_FPB for short address: 0x%02X%02X",
 				config->ack_fpb.addr[1],
 				config->ack_fpb.addr[0]);
@@ -825,12 +854,12 @@ static int stm32wba_802154_set_ack_fpb(const struct ieee802154_config *config)
 static int stm32wba_802154_clear_ack_fpb(const struct ieee802154_config *config)
 {
 	int err = 0;
-	stm32wba_802154_ral_error_t ret;
+	st_802154_ral_error_t ret;
 
 	if (config->ack_fpb.extended) {
-		ret = stm32wba_802154_ral_pending_bit_for_ext_addr_clear(
+		ret = st_802154_ral_pending_bit_for_ext_addr_clear(
 						(const uint8_t *)config->ack_fpb.addr);
-		if (ret != STM32WBA_802154_RAL_ERROR_NONE) {
+		if (ret != ST_802154_RAL_ERROR_NONE) {
 			LOG_ERR("Failed to clear ACK_FPB for extended address: "
 				"%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x",
 				config->ack_fpb.addr[0], config->ack_fpb.addr[1],
@@ -850,8 +879,8 @@ static int stm32wba_802154_clear_ack_fpb(const struct ieee802154_config *config)
 		uint16_t short_addr = (uint16_t)config->ack_fpb.addr[0] |
 				     (uint16_t)(config->ack_fpb.addr[1] << 8);
 
-		ret = stm32wba_802154_ral_pending_bit_for_short_addr_clear(short_addr);
-		if (ret != STM32WBA_802154_RAL_ERROR_NONE) {
+		ret = st_802154_ral_pending_bit_for_short_addr_clear(short_addr);
+		if (ret != ST_802154_RAL_ERROR_NONE) {
 			LOG_ERR("Failed to clear ACK_FPB for short address: 0x%02X%02X",
 				config->ack_fpb.addr[1],
 				config->ack_fpb.addr[0]);
@@ -868,10 +897,10 @@ static int stm32wba_802154_clear_ack_fpb(const struct ieee802154_config *config)
 static int stm32wba_802154_clear_all_ack_fpb(const struct ieee802154_config *config)
 {
 	if (config->ack_fpb.extended) {
-		stm32wba_802154_ral_pending_bit_for_ext_addr_reset();
+		st_802154_ral_pending_bit_for_ext_addr_reset();
 		LOG_DBG("Clear ACK_FPB for all extended addresses");
 	} else {
-		stm32wba_802154_ral_pending_bit_for_short_addr_reset();
+		st_802154_ral_pending_bit_for_short_addr_reset();
 		LOG_DBG("Clear ACK_FPB for all short addresses");
 	}
 	return 0;
@@ -919,11 +948,11 @@ static void stm32wba_802154_configure_mac_key(struct ieee802154_key *mac_keys)
 		memcpy(keys[i], mac_keys->key_value, STM32WBA_MAC_KEY_SIZE);
 	}
 
-	stm32wba_802154_ral_set_mac_key(aKeyIdMode,
-					aKeyId,
-					aPrevKey,
-					aCurrKey,
-					aNextKey);
+	st_802154_ral_set_mac_key(aKeyIdMode,
+				  aKeyId,
+				  aPrevKey,
+				  aCurrKey,
+				  aNextKey);
 }
 #endif /* SUPPORT_RADIO_SECURITY_OT_1_2 */
 
@@ -938,7 +967,7 @@ static int stm32wba_802154_configure(const struct device *dev,
 	switch (type) {
 	case IEEE802154_CONFIG_AUTO_ACK_FPB:
 		LOG_DBG("Setting AUTO_ACK_FPB: enabled = %d", config->auto_ack_fpb.enabled);
-		stm32wba_802154_ral_auto_pending_bit_set(config->auto_ack_fpb.enabled);
+		st_802154_ral_auto_pending_bit_set(config->auto_ack_fpb.enabled);
 		break;
 
 	case IEEE802154_CONFIG_ACK_FPB:
@@ -947,12 +976,12 @@ static int stm32wba_802154_configure(const struct device *dev,
 
 	case IEEE802154_CONFIG_PAN_COORDINATOR:
 		LOG_DBG("Setting PAN_COORDINATOR: %d", config->pan_coordinator);
-		stm32wba_802154_ral_pan_coord_set(config->pan_coordinator);
+		st_802154_ral_pan_coord_set(config->pan_coordinator);
 		break;
 
 	case IEEE802154_CONFIG_PROMISCUOUS:
 		LOG_DBG("Setting PROMISCUOUS mode: %d", config->promiscuous);
-		stm32wba_802154_ral_promiscuous_set(config->promiscuous);
+		st_802154_ral_promiscuous_set(config->promiscuous);
 		break;
 
 	case IEEE802154_CONFIG_EVENT_HANDLER:
@@ -964,21 +993,22 @@ static int stm32wba_802154_configure(const struct device *dev,
 		LOG_DBG("Setting IEEE802154_CONFIG_RX_ON_WHEN_IDLE: enabled = %d",
 			config->rx_on_when_idle);
 		stm32wba_802154_data.rx_on_when_idle = config->rx_on_when_idle;
-		stm32wba_802154_ral_set_continuous_reception(config->rx_on_when_idle);
+		st_802154_ral_set_continuous_reception(config->rx_on_when_idle);
 		break;
 #ifdef CONFIG_IEEE802154_STM32WBA_CSMA_CA_ENABLED
 	case IEEE802154_CONFIG_CSMA_CA_BACKOFFS:
 		LOG_DBG("Setting MAX_CSMA_BACKOFF: %u", config->csma_ca_backoffs);
-		stm32wba_802154_ral_set_max_csma_backoff(config->csma_ca_backoffs);
+		stm32wba_802154_data.max_csma_backoffs = config->csma_ca_backoffs;
+		st_802154_ral_set_max_csma_backoff(config->csma_ca_backoffs);
 		break;
 #endif
 #if (SUPPORT_RADIO_SECURITY_OT_1_2 == 1)
 	case IEEE802154_CONFIG_FRAME_COUNTER_IF_LARGER:
-		stm32wba_802154_ral_set_mac_frame_counter_if_larger(config->frame_counter);
+		st_802154_ral_set_mac_frame_counter_if_larger(config->frame_counter);
 		break;
 
 	case IEEE802154_CONFIG_FRAME_COUNTER:
-		stm32wba_802154_ral_set_mac_frame_counter(config->frame_counter);
+		st_802154_ral_set_mac_frame_counter(config->frame_counter);
 		break;
 
 	case IEEE802154_CONFIG_MAC_KEYS:
@@ -1024,9 +1054,9 @@ static int stm32wba_802154_attr_get(const struct device *dev,
 /* WBA radio driver callbacks */
 
 static void stm32wba_802154_receive_done(uint8_t *p_buffer,
-					 stm32wba_802154_ral_receive_done_metadata_t *p_metadata)
+					 st_802154_ral_receive_done_metadata_t *p_metadata)
 {
-	if ((p_buffer == NULL) || (p_metadata->error != STM32WBA_802154_RAL_ERROR_NONE)) {
+	if ((p_buffer == NULL) || (p_metadata->error != ST_802154_RAL_ERROR_NONE)) {
 		stm32wba_802154_receive_failed(p_metadata->error);
 		return;
 	}
@@ -1041,10 +1071,8 @@ static void stm32wba_802154_receive_done(uint8_t *p_buffer,
 		stm32wba_802154_data.rx_frames[i].rssi = p_metadata->power;
 		stm32wba_802154_data.rx_frames[i].lqi = p_metadata->lqi;
 		stm32wba_802154_data.rx_frames[i].time = p_metadata->time;
-		stm32wba_802154_data.rx_frames[i].ack_fpb =
-							stm32wba_802154_data.last_frame_ack_fpb;
-		stm32wba_802154_data.rx_frames[i].ack_seb =
-							stm32wba_802154_data.last_frame_ack_seb;
+		stm32wba_802154_data.rx_frames[i].ack_fpb = p_metadata->acked_with_frame_pending;
+		stm32wba_802154_data.rx_frames[i].ack_seb = p_metadata->acked_with_sec_enh_ack;
 		stm32wba_802154_data.last_frame_ack_fpb = false;
 		stm32wba_802154_data.last_frame_ack_seb = false;
 
@@ -1062,10 +1090,15 @@ void stm32wba_802154_tx_ack_started(bool ack_fpb, bool ack_seb)
 	stm32wba_802154_data.last_frame_ack_seb = ack_seb;
 }
 
+void stm32wba_802154_cbk_tx_started(void)
+{
+
+}
+
 static void stm32wba_802154_transmit_done(
 				uint8_t *p_frame,
-				stm32wba_802154_ral_error_t error,
-				const stm32wba_802154_ral_transmit_done_metadata_t *p_metadata)
+				st_802154_ral_error_t error,
+				const st_802154_ral_transmit_done_metadata_t *p_metadata)
 {
 	ARG_UNUSED(p_frame);
 
@@ -1087,7 +1120,7 @@ static void stm32wba_802154_transmit_done(
 	stm32wba_802154_data.ack_frame.length = p_metadata->length;
 
 	if (stm32wba_802154_data.ack_frame.length != 0) {
-		stm32wba_802154_data.ack_frame.psdu = p_metadata->p_ack;
+		stm32wba_802154_data.ack_frame.psdu = p_metadata->ack_ptr;
 		stm32wba_802154_data.ack_frame.rssi = p_metadata->power;
 		stm32wba_802154_data.ack_frame.lqi = p_metadata->lqi;
 	} else {
@@ -1099,9 +1132,9 @@ static void stm32wba_802154_transmit_done(
 	k_sem_give(&stm32wba_802154_data.tx_wait);
 }
 
-static void stm32wba_802154_cca_done(stm32wba_802154_ral_error_t error)
+static void stm32wba_802154_cca_done(uint8_t error)
 {
-	if (error == STM32WBA_802154_RAL_ERROR_NONE) {
+	if (error == 0) {
 		stm32wba_802154_data.channel_free = true;
 	}
 
