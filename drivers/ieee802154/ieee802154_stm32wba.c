@@ -265,7 +265,7 @@ static int stm32wba_802154_configure_extended(enum ieee802154_stm32wba_config_ty
 		/* Unblock any waiter and mark current TX as aborted. */
 		stm32wba_tx_abort_on_reset = true;
 		stm32wba_tx_wait_pending = false;
-		stm32wba_802154_data.tx_result = STM32WBA_802154_RAL_ERROR_ABORT;
+		stm32wba_802154_data.tx_result = ST_802154_RAL_ERROR_ABORT;
 		stm32wba_802154_data.tx_psdu_from_tx_done = false;
 		stm32wba_802154_data.ack_frame.psdu = NULL;
 		stm32wba_802154_data.ack_frame.length = 0;
@@ -274,6 +274,16 @@ static int stm32wba_802154_configure_extended(enum ieee802154_stm32wba_config_ty
 		if (ret != ST_802154_RAL_ERROR_NONE) {
 			return -EIO;
 		}
+		break;
+
+	case IEEE802154_STM32WBA_CONFIG_CCA_ENABLE:
+		LOG_DBG("Setting CCA_ENABLE: %u", config->cca_enable);
+		st_802154_ral_set_cca_en(config->cca_enable);
+		break;
+
+	case IEEE802154_STM32WBA_CONFIG_CSMA_ENABLE:
+		LOG_DBG("Setting CSMA_ENABLE: %u", config->csma_enable);
+		st_802154_ral_set_csma_en(config->csma_enable);
 		break;
 
 	default:
@@ -329,6 +339,21 @@ static int stm32wba_802154_attr_get_extended(enum ieee802154_stm32wba_attr attr,
 			return -ENOENT;
 		}
 		value->rand_num = &l_rand_num;
+		break;
+
+	case IEEE802154_STM32WBA_ATTR_CCA_ENABLE:
+		LOG_DBG("Getting CCA_ENABLE attribute");
+		value->cca_enable = st_802154_ral_get_cca_en();
+		break;
+
+	case IEEE802154_STM32WBA_ATTR_CSMA_ENABLE:
+		LOG_DBG("Getting CSMA_ENABLE attribute");
+		value->csma_enable = st_802154_ral_get_csma_en();
+		break;
+
+	case IEEE802154_STM32WBA_ATTR_RADIO_STATE:
+		LOG_DBG("Getting RADIO_STATE attribute");
+		value->radio_state = st_802154_ral_get_state();
 		break;
 
 	default:
